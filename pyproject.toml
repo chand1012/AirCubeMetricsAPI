@@ -1,0 +1,23 @@
+[project]
+name = "aircubemetricsapi"
+version = "0.1.0"
+description = "FastAPI and Prometheus metrics API for AirCube serial sensor readings"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.139.0",
+    "httpx2>=2.5.0",
+    "prometheus-client>=0.25.0",
+    "pyserial>=3.5",
+    "uvicorn[standard]>=0.35.0",
+]
+
+[project.scripts]
+aircube-read = "aircube_metrics_api.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aircube_metrics_api"]

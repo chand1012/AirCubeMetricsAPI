@@ -1,0 +1,11 @@
+services:
+  aircube-metrics-api:
+    build: .
+    image: aircube-metrics-api:latest
+    environment:
+      AIRCUBE_PORT: ${AIRCUBE_PORT:-/dev/ttyACM0}
+    ports:
+      - "${AIRCUBE_API_PORT:-8000}:8000"
+    devices:
+      - "${AIRCUBE_PORT:-/dev/ttyACM0}:${AIRCUBE_PORT:-/dev/ttyACM0}"
+    restart: unless-stopped
