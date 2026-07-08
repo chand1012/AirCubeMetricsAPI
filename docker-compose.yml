@@ -4,8 +4,12 @@ services:
     image: aircube-metrics-api:latest
     environment:
       AIRCUBE_PORT: ${AIRCUBE_PORT:-/dev/ttyACM0}
+      AIRCUBE_DATABASE_URL: ${AIRCUBE_DATABASE_URL:-sqlite:////data/aircube.sqlite3}
+      AIRCUBE_RETENTION_DAYS: ${AIRCUBE_RETENTION_DAYS:-7}
     ports:
       - "${AIRCUBE_API_PORT:-8000}:8000"
     devices:
       - "${AIRCUBE_PORT:-/dev/ttyACM0}:${AIRCUBE_PORT:-/dev/ttyACM0}"
+    volumes:
+      - ./data:/data
     restart: unless-stopped

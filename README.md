@@ -4,14 +4,17 @@ Turn an AirCube sensor on a serial port into a small, container-friendly
 metrics service.
 
 AirCube Metrics API reads newline-delimited JSON from an AirCube device,
-keeps the latest valid reading in memory, and exposes it as both JSON and
-Prometheus metrics. It is intentionally boring in the best way: one process,
-one serial reader, one FastAPI app, and a Docker image that can run anywhere
-you can forward the device.
+stores the last seven days of readings in SQLite, and exposes the data as
+JSON, queryable time windows, aggregate buckets, and Prometheus metrics. It is
+intentionally boring in the best way: one process, one serial reader, one
+FastAPI app, and a Docker image that can run anywhere you can forward the
+device.
 
 ## What You Get
 
 - FastAPI endpoint for the latest AirCube reading
+- SQLite storage for the last seven days of sensor history
+- Query endpoint for raw rows, hourly averages, and daily averages
 - Prometheus `/metrics` endpoint for dashboards and alerting
 - Direct serial reader CLI for quick debugging
 - `uv` based Python project with a locked dependency graph
@@ -43,6 +46,7 @@ Check it:
 
 ```sh
 curl http://localhost:8000/latest
+curl "http://localhost:8000/query?aggregate=day"
 curl http://localhost:8000/metrics
 ```
 
@@ -54,28 +58,47 @@ Build locally:
 docker build -t aircube-metrics-api .
 ```
 
-Run with a forwarded serial device:
+Run with a forwarded serial device and a persistent SQLite database:
 
 ```sh
+mkdir -p data
+
 docker run --rm \
   --device=/dev/ttyACM0:/dev/ttyACM0 \
   -e AIRCUBE_PORT=/dev/ttyACM0 \
+  -e AIRCUBE_DATABASE_URL=sqlite:////data/aircube.sqlite3 \
+  -e AIRCUBE_RETENTION_DAYS=7 \
+  -v "$PWD/data:/data" \
   -p 8000:8000 \
   aircube-metrics-api
 ```
 
+The `--device` flag forwards the AirCube serial port into the container. The
+`-v "$PWD/data:/data"` mount keeps `aircube.sqlite3` on the host so the last
+seven days of readings survive container restarts.
+
 Run with Compose:
 
 ```sh
+mkdir -p data
 AIRCUBE_PORT=/dev/ttyACM0 docker compose up --build
 ```
+
+Compose uses the same runtime shape: `${AIRCUBE_PORT}` is forwarded as a device,
+`./data` is mounted at `/data`, `AIRCUBE_DATABASE_URL` defaults to
+`sqlite:////data/aircube.sqlite3`, and `AIRCUBE_RETENTION_DAYS` defaults to `7`.
 
 Use the published GHCR image:
 
 ```sh
+mkdir -p data
+
 docker run --rm \
   --device=/dev/ttyACM0:/dev/ttyACM0 \
   -e AIRCUBE_PORT=/dev/ttyACM0 \
+  -e AIRCUBE_DATABASE_URL=sqlite:////data/aircube.sqlite3 \
+  -e AIRCUBE_RETENTION_DAYS=7 \
+  -v "$PWD/data:/data" \
   -p 8000:8000 \
   ghcr.io/chand1012/aircubemetricsapi:latest
 ```
@@ -99,12 +122,14 @@ through a bridge that creates a usable device path inside the container.
 
 ### `GET /latest`
 
-Returns the most recent valid AirCube reading.
+Returns the newest reading stored in SQLite.
 
 Example response:
 
 ```json
 {
+  "id": 1,
+  "recorded_at": "2026-07-08T14:21:00.000000",
   "temp_c": 23.45,
   "humidity": 52.3,
   "eco2": 415,
@@ -123,6 +148,60 @@ If the service has not received a valid reading yet, it returns:
 ```
 
 with HTTP status `503`.
+
+### `GET /query`
+
+Returns SQLModel-shaped readings from SQLite. Without an aggregate, the
+endpoint returns raw `AirCubeReading` rows ordered by `recorded_at`.
+
+Get the last hour of data:
+
+```sh
+curl "http://localhost:8000/query?start=2026-07-08T13:00:00Z&end=2026-07-08T14:00:00Z"
+```
+
+Limit raw results:
+
+```sh
+curl "http://localhost:8000/query?limit=100"
+```
+
+Get hourly averages:
+
+```sh
+curl "http://localhost:8000/query?aggregate=hour&start=2026-07-08T00:00:00Z"
+```
+
+Get daily averages:
+
+```sh
+curl "http://localhost:8000/query?aggregate=day"
+```
+
+Aggregate responses include averaged sensor fields and a sample count:
+
+```json
+[
+  {
+    "bucket": "2026-07-08",
+    "temp_c": 23.1,
+    "humidity": 52.8,
+    "eco2": 417.5,
+    "etvoc": 43.2,
+    "voc_level": 3.0,
+    "sample_count": 1440
+  }
+]
+```
+
+Supported query parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `start` | Inclusive ISO-8601 lower bound for `recorded_at` |
+| `end` | Exclusive ISO-8601 upper bound for `recorded_at` |
+| `aggregate` | Optional bucket mode: `hour` or `day` |
+| `limit` | Raw row limit when `aggregate` is omitted; default `1000` |
 
 ### `GET /metrics`
 
@@ -175,9 +254,12 @@ running the API or container.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AIRCUBE_PORT` | `/dev/cu.usbmodem1101` | Serial device path used by the API reader |
+| `AIRCUBE_DATABASE_URL` | `sqlite:///./aircube.sqlite3` | SQLModel database URL for persisted readings |
+| `AIRCUBE_RETENTION_DAYS` | `7` | Number of days to retain SQLite readings before cleanup |
 | `AIRCUBE_API_PORT` | `8000` | Host port used by `docker-compose.yml` |
 
-The serial baud rate is `115200`.
+The serial baud rate is `115200`. Readings older than `AIRCUBE_RETENTION_DAYS`
+are deleted on startup and periodically after inserts.
 
 ## Development
 
@@ -200,6 +282,7 @@ Project layout:
 aircube_metrics_api/
   api.py       FastAPI app, Prometheus state, serial worker
   main.py      serial parser and direct reader CLI
+  storage.py   SQLModel table and SQLite query helpers
 tests/         parser and API behavior tests
 Dockerfile     production container image
 docker-compose.yml
