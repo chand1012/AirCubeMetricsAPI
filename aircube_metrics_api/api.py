@@ -6,9 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Response
+from fastmcp.utilities.lifespan import combine_lifespans
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
 
 from aircube_metrics_api.main import open_serial, parse_sensor_line
+from aircube_metrics_api.mcp import create_mcp_server
 from aircube_metrics_api.storage import AirCubeAggregate, AirCubeReading, AirCubeStore
 
 
@@ -128,7 +130,7 @@ def create_app(state=None, start_serial=False, port=None, baud=DEFAULT_BAUD):
     state = state or AirCubeState()
 
     @asynccontextmanager
-    async def lifespan(app):
+    async def app_lifespan(app):
         stop_event = threading.Event()
         thread = None
         state.create_schema()
@@ -149,7 +151,14 @@ def create_app(state=None, start_serial=False, port=None, baud=DEFAULT_BAUD):
         if thread is not None:
             thread.join(timeout=2)
 
-    app = FastAPI(lifespan=lifespan)
+    mcp = create_mcp_server(state)
+    mcp_app = mcp.http_app(path="/mcp")
+    app = FastAPI(
+        routes=[*mcp_app.routes],
+        lifespan=combine_lifespans(app_lifespan, mcp_app.lifespan),
+    )
+    app.state.aircube = state
+    app.state.mcp = mcp
 
     @app.get("/latest", response_model=AirCubeReading)
     def latest():

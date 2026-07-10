@@ -16,6 +16,7 @@ device.
 - SQLite storage for the last seven days of sensor history
 - Query endpoint for raw rows, hourly averages, and daily averages
 - Prometheus `/metrics` endpoint for dashboards and alerting
+- FastMCP endpoint with purpose-built `latest` and `query` tools for LLMs
 - Direct serial reader CLI for quick debugging
 - `uv` based Python project with a locked dependency graph
 - Docker and Compose support with serial device forwarding
@@ -48,6 +49,12 @@ Check it:
 curl http://localhost:8000/latest
 curl "http://localhost:8000/query?aggregate=day"
 curl http://localhost:8000/metrics
+```
+
+Connect an MCP client to the streamable HTTP endpoint:
+
+```text
+http://localhost:8000/mcp
 ```
 
 ## Docker
@@ -215,6 +222,38 @@ aircube_etvoc_ppb 42.0
 aircube_voc_level 3.0
 aircube_uptime_milliseconds 12345.0
 ```
+
+## MCP For LLMs
+
+The same process serves a FastMCP server at `/mcp`. It shares the API's
+database and lifecycle, so MCP clients and REST clients always see the same
+sensor readings.
+
+The server exposes two focused tools:
+
+| Tool | Description |
+| --- | --- |
+| `latest` | Return the newest stored sensor reading |
+| `query` | Return raw readings or hourly/daily averages for an optional time window |
+
+`query` accepts the same `start`, `end`, `aggregate`, and `limit` arguments as
+`GET /query`. Times are ISO-8601 strings; `start` is inclusive and `end` is
+exclusive.
+
+For clients that accept an MCP server URL, configure:
+
+```json
+{
+  "mcpServers": {
+    "aircube": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+The exact configuration wrapper varies by LLM client, but the URL and tools
+remain the same.
 
 ## Serial Data Format
 

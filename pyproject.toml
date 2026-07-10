@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.139.0",
+    "fastmcp>=3.0.0",
     "httpx2>=2.5.0",
     "prometheus-client>=0.25.0",
     "pyserial>=3.5",
