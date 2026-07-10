@@ -1,6 +1,6 @@
 import unittest
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -164,6 +164,51 @@ class ApiTests(unittest.TestCase):
 
     def test_app_starts_serial_reader_from_environment(self):
         self.assertTrue(api.app.router.lifespan_context is not None)
+
+    def test_serial_worker_logs_serial_open_failures(self):
+        stop_event = Mock()
+        stop_event.is_set.return_value = False
+
+        with patch("aircube_metrics_api.api.open_serial", side_effect=RuntimeError("device missing")):
+            with self.assertLogs("aircube_metrics_api.api", level="ERROR") as logs:
+                api.serial_worker(Mock(), stop_event, "/dev/ttyACM0")
+
+        self.assertIn(
+            "AirCube serial reader stopped unexpectedly for port /dev/ttyACM0",
+            "\n".join(logs.output),
+        )
+
+    def test_serial_worker_logs_parse_failures_and_keeps_reading(self):
+        state = Mock()
+        stop_event = Mock()
+        stop_event.is_set.side_effect = [False, False, True]
+        serial_port = Mock()
+        serial_port.readline.side_effect = [
+            b'{"ens210": {}}\n',
+            (
+                b'{"ens210":{"temperature_c":23.45,"humidity":52.3},'
+                b'"ens16x":{"eco2":415,"etvoc":42,"aqi":3},"timestamp":12345}\n'
+            ),
+        ]
+        serial_context = Mock()
+        serial_context.__enter__ = Mock(return_value=serial_port)
+        serial_context.__exit__ = Mock(return_value=False)
+
+        with patch("aircube_metrics_api.api.open_serial", return_value=serial_context):
+            with self.assertLogs("aircube_metrics_api.api", level="WARNING") as logs:
+                api.serial_worker(state, stop_event, "/dev/ttyACM0")
+
+        self.assertIn("Failed to parse AirCube serial line", "\n".join(logs.output))
+        state.update.assert_called_once_with(
+            {
+                "temp_c": 23.45,
+                "humidity": 52.3,
+                "eco2": 415,
+                "etvoc": 42,
+                "voc_level": 3,
+                "timestamp_ms": 12345,
+            }
+        )
 
 
 if __name__ == "__main__":

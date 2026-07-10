@@ -37,6 +37,12 @@ class MainTests(unittest.TestCase):
     def test_parse_sensor_line_ignores_non_json_lines(self):
         self.assertIsNone(main.parse_sensor_line("ESP_LOGI booting"))
 
+    def test_open_serial_supports_pyserial_url_handlers(self):
+        with patch("serial.serial_for_url") as serial_for_url:
+            main.open_serial("socket://host.docker.internal:7000")
+
+        serial_for_url.assert_called_once_with("socket://host.docker.internal:7000", 115200, timeout=1)
+
     def test_main_prints_usage_when_serial_port_is_missing(self):
         with patch("sys.stderr") as stderr:
             exit_code = main.main([])

@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -7,7 +8,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
 
-from aircube_metrics_api.main import parse_sensor_line
+from aircube_metrics_api.main import open_serial, parse_sensor_line
 from aircube_metrics_api.storage import AirCubeAggregate, AirCubeReading, AirCubeStore
 
 
@@ -16,6 +17,8 @@ DEFAULT_BAUD = 115200
 DEFAULT_DATABASE_URL = "sqlite:///./aircube.sqlite3"
 DEFAULT_RETENTION_DAYS = 7
 DEFAULT_CLEANUP_INTERVAL = timedelta(minutes=5)
+
+logger = logging.getLogger(__name__)
 
 
 class AirCubeState:
@@ -96,14 +99,29 @@ class AirCubeState:
 
 
 def serial_worker(state, stop_event, port, baud=DEFAULT_BAUD):
-    import serial
-
-    with serial.Serial(port, baud, timeout=1) as ser:
-        while not stop_event.is_set():
-            line = ser.readline().decode(errors="ignore").strip()
-            reading = parse_sensor_line(line)
-            if reading is not None:
+    try:
+        logger.info("Starting AirCube serial reader on %s at %s baud", port, baud)
+        with open_serial(port, baud) as ser:
+            logger.info("AirCube serial port opened: %s", port)
+            received_reading = False
+            while not stop_event.is_set():
+                line = ser.readline().decode(errors="ignore").strip()
+                if not line:
+                    continue
+                try:
+                    reading = parse_sensor_line(line)
+                except Exception:
+                    logger.warning("Failed to parse AirCube serial line: %r", line, exc_info=True)
+                    continue
+                if reading is None:
+                    logger.debug("Ignoring non-reading AirCube serial line: %r", line)
+                    continue
                 state.update(reading)
+                if not received_reading:
+                    logger.info("Received first AirCube reading from %s", port)
+                    received_reading = True
+    except Exception:
+        logger.exception("AirCube serial reader stopped unexpectedly for port %s", port)
 
 
 def create_app(state=None, start_serial=False, port=None, baud=DEFAULT_BAUD):

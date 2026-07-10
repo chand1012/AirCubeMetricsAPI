@@ -17,10 +17,14 @@ def parse_sensor_line(line):
     }
 
 
-def read_aircube(port, baud=115200):
+def open_serial(port, baud=115200):
     import serial
 
-    with serial.Serial(port, baud, timeout=1) as ser:
+    return serial.serial_for_url(port, baud, timeout=1)
+
+
+def read_aircube(port, baud=115200):
+    with open_serial(port, baud) as ser:
         while True:
             line = ser.readline().decode(errors="ignore").strip()
             reading = parse_sensor_line(line)
